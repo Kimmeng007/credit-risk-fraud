@@ -47,7 +47,8 @@ def process_fraud_data(input_path: str | Path, output_path: str | Path) -> None:
     source = require_real_dataset(input_path, "IEEE-CIS fraud")
     spark = _spark_session("fraud-processing")
     try:
-        from pyspark.sql import Window, functions as F
+        from pyspark.sql import Window
+        from pyspark.sql import functions as F
 
         transaction_source = source / "train_transaction.csv" if source.is_dir() else source
         transaction_source = require_real_dataset(transaction_source, "IEEE-CIS transactions")
