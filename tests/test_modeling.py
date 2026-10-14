@@ -3,10 +3,14 @@ import pandas as pd
 import pytest
 
 from credit_risk_fraud.modeling import (
+    calibrate_model,
+    calibration_table,
     choose_threshold,
     evaluate_classifier,
     select_threshold,
+    shap_importance,
     time_ordered_split,
+    train_lightgbm_model,
     train_logistic_model,
 )
 
@@ -65,6 +69,31 @@ def test_evaluate_classifier_reports_expected_fields(separable_data):
     assert report.brier < 0.1
     assert report.base_rate == pytest.approx(0.5)
     assert report.threshold == threshold
+
+
+def test_lightgbm_calibration_and_shap_on_imbalanced_data():
+    pytest.importorskip("lightgbm")
+    pytest.importorskip("shap")
+    rng = np.random.default_rng(0)
+    n = 6000
+    features = pd.DataFrame({"signal": rng.normal(size=n), "noise": rng.normal(size=n)})
+    labels = pd.Series((rng.random(n) < 1 / (1 + np.exp(-(2 * features["signal"] - 3)))).astype(int))
+    x_train, x_val, x_test = features[:3000], features[3000:4500], features[4500:]
+    y_train, y_val, y_test = labels[:3000], labels[3000:4500], labels[4500:]
+
+    model = train_lightgbm_model(x_train, y_train, x_val, y_val, n_estimators=200, num_leaves=7,
+                                 min_child_samples=20)
+    calibrated = calibrate_model(model, x_val, y_val)
+    report = evaluate_classifier(calibrated, x_test, y_test, select_threshold(calibrated, x_val, y_val))
+    table = calibration_table(y_test, calibrated.predict_proba(x_test)[:, 1], bins=5)
+    importance = shap_importance(model, x_test)
+
+    assert report.roc_auc > 0.8
+    assert len(table) == 5
+    assert sum(row["rows"] for row in table) == len(x_test)
+    # Calibrated probabilities should track observed rates in aggregate.
+    assert abs(np.mean([r["mean_predicted"] for r in table]) - y_test.mean()) < 0.05
+    assert next(iter(importance)) == "signal"
 
 
 def test_time_ordered_split_keeps_later_periods_out_of_training():

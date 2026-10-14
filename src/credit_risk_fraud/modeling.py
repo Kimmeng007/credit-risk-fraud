@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -58,6 +59,76 @@ def train_logistic_model(features, labels, class_weight: str = "balanced"):
     )
     model.fit(features, labels)
     return model
+
+
+def train_lightgbm_model(x_train, y_train, x_val, y_val, **overrides):
+    """Gradient boosting with early stopping on validation PR-AUC.
+
+    No class reweighting: it distorts predicted probabilities, while ranking metrics do not
+    need it. Imbalance is handled by the PR-AUC objective for early stopping and by choosing
+    the decision threshold for a target recall.
+    """
+    import lightgbm as lgb
+
+    params = {
+        "n_estimators": 3000,
+        "learning_rate": 0.05,
+        "num_leaves": 63,
+        "min_child_samples": 200,
+        "subsample": 0.8,
+        "subsample_freq": 1,
+        "colsample_bytree": 0.7,
+        "reg_lambda": 1.0,
+        "random_state": 42,
+        "verbose": -1,
+    }
+    params.update(overrides)
+    model = lgb.LGBMClassifier(**params)
+    model.fit(
+        x_train,
+        y_train,
+        eval_X=(x_val,),
+        eval_y=(y_val,),
+        eval_metric="average_precision",
+        callbacks=[lgb.early_stopping(100, first_metric_only=True, verbose=False)],
+    )
+    return model
+
+
+def calibrate_model(model, x_val, y_val):
+    """Map scores to probabilities with isotonic regression fitted on the validation split."""
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.frozen import FrozenEstimator
+
+    calibrated = CalibratedClassifierCV(FrozenEstimator(model), method="isotonic")
+    calibrated.fit(x_val, y_val)
+    return calibrated
+
+
+def calibration_table(labels, probabilities, bins: int = 10) -> list[dict]:
+    """Mean predicted vs observed rate per predicted-probability decile."""
+    frame = pd.DataFrame({"label": np.asarray(labels), "probability": np.asarray(probabilities)})
+    frame["bin"] = pd.qcut(frame["probability"].rank(method="first"), bins, labels=False) + 1
+    grouped = frame.groupby("bin").agg(
+        rows=("label", "size"), mean_predicted=("probability", "mean"), observed_rate=("label", "mean")
+    )
+    return [
+        {"bin": int(index), **{key: float(value) for key, value in row.items()}}
+        for index, row in grouped.iterrows()
+    ]
+
+
+def shap_importance(model, features, max_rows: int = 20_000, random_state: int = 42) -> dict:
+    """Mean absolute SHAP value (log-odds contribution) per feature for a tree model."""
+    import shap
+
+    sample = features.sample(min(max_rows, len(features)), random_state=random_state)
+    values = shap.TreeExplainer(model).shap_values(sample)
+    if isinstance(values, list):  # older SHAP returns one array per class
+        values = values[1]
+    importance = np.abs(values).mean(axis=0)
+    order = np.argsort(importance)[::-1]
+    return {str(sample.columns[i]): float(importance[i]) for i in order}
 
 
 def select_threshold(model, features, labels, minimum_recall: float = 0.50) -> float:

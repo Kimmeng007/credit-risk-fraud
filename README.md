@@ -26,19 +26,56 @@ python -m pytest
 
 Processed Parquet outputs are written to `data/processed`. Configure HDFS paths through the Spark submit environment when moving from local mode to a single-node HDFS deployment.
 
-## Modeling contract
+## Modeling
 
-`credit_risk_fraud.modeling` provides an imbalance-aware logistic regression baseline and threshold selection based on a minimum recall target. Reports must include ROC-AUC, PR-AUC, Brier score, base rate, precision, recall, and the selected threshold. Credit model interpretation should publish standardized coefficients; fraud decisions should prioritize precision/recall and PR-AUC over accuracy.
+Each task trains a class-weighted logistic regression baseline and a LightGBM model. The LightGBM scores are then calibrated with isotonic regression fitted on the validation split. Every report includes ROC-AUC, PR-AUC, Brier score, base rate, precision, recall, the selected threshold, a test-set calibration table, the score PSI between train and test, and SHAP feature importance.
 
 ```powershell
-python scripts/train_models.py --credit --fraud
+python scripts/train_models.py --credit --fraud     # reports in data/reports, models in data/models
+python scripts/run_statistical_tests.py             # hypothesis tests on default and fraud drivers
 ```
+
+### Results (out-of-time test split)
+
+| Model | ROC-AUC | PR-AUC | Brier | Precision @ recall | Base rate |
+|---|---|---|---|---|---|
+| Credit: logistic regression | 0.721 | 0.401 | 0.209 | 0.39 @ 0.47 | 20.0% |
+| Credit: LightGBM, calibrated | 0.732 | 0.409 | 0.141 | 0.40 @ 0.50 | 20.0% |
+| Fraud: logistic regression | 0.823 | 0.167 | 0.151 | 0.20 @ 0.50 | 3.5% |
+| Fraud: LightGBM, calibrated | 0.903 | 0.528 | 0.022 | 0.59 @ 0.48 | 3.5% |
+
+How to read these results:
+
+- **Credit gains from LightGBM are small.** Public Lending Club data without Lending Club's own grade typically tops out around 0.70–0.73 ROC-AUC. The larger improvement is calibration: the class-weighted logistic model inflates probabilities (Brier 0.209), while calibrated LightGBM matches observed default rates in every test decile (top decile: 50.5% predicted vs 50.7% observed). This matters because credit scores feed pricing and expected-loss calculations, not only accept/reject decisions.
+- **Fraud gains are large.** PR-AUC rises from 0.17 to 0.53, a 15× lift over the 3.5% base rate. At the chosen threshold, about 6 of every 10 flagged transactions are fraud and about half of all fraud is caught. Accuracy is not reported: a model that flags nothing scores 96.5% accuracy.
+- **The threshold is a business choice.** It is set as the highest-precision point that catches at least 50% of positives on the validation split (`--minimum-recall`). Test recall comes in slightly below the target (0.48 vs 0.50) because the test period differs from validation. Raising the recall floor catches more fraud at the cost of more false alerts for analysts to review.
+- **Fraud scores carry their own drift risk.** The top fraud SHAP features are anonymized IEEE-CIS columns (`C13`, `C1`, `D1`) and card and email identifiers. These are strong in-sample but could shift as card portfolios change. Score PSI between train and test is 0.004 (stable) for both models; see the monitoring plan below.
+- **SHAP drivers agree with the statistical tests.** For credit, the strongest drivers are term, installment-to-income, FICO and loan-to-income. Bar charts are saved as `data/reports/*_shap_importance.png`.
+
+### Statistical tests
+
+`scripts/run_statistical_tests.py` runs 14 tests. Categorical drivers use chi-square tests with Cramér's V; numeric drivers use Mann-Whitney U with rank-biserial r. Significance uses a Bonferroni-adjusted alpha. With about a million rows almost every test is significant, so the effect size is what shows whether a driver matters:
+
+| Outcome | Driver | Effect size | Magnitude |
+|---|---|---|---|
+| Default | Loan term (36 vs 60 months) | V = 0.20 | small, the strongest credit driver |
+| Default | FICO score | r = −0.18 | small |
+| Default | Debt-to-income | r = 0.16 | small |
+| Default | Purpose, state, income quintile, home ownership, credit history | V = 0.03–0.07 | negligible, though all significant |
+| Fraud | Seconds since previous transaction (velocity) | r = −0.26 | small, the strongest fraud driver |
+| Fraud | Transactions in last 24h (velocity) | r = 0.21 | small |
+| Fraud | Product code | V = 0.17 | small |
+| Fraud | Transaction amount | r = −0.005 | negligible and not significant (p = 0.23) |
+
+The engineered velocity features are the strongest single fraud drivers in these tests, which supports the Spark feature engineering. State is significant but has a negligible effect, and it is excluded from the credit model because geography can act as a proxy for protected characteristics in lending.
 
 ### Key design decisions
 
 - **Credit label uses resolved loans only.** `Fully Paid` (and the "does not meet credit policy" variant) is 0; `Charged Off`, `Default` and the policy variant are 1. `Current`, `Late` and `In Grace Period` loans have no final outcome and are dropped rather than labeled non-default, which would understate the default rate.
 - **Origination-time fields only.** The processed credit table keeps fields known at application time. Payment, recovery, hardship and settlement columns are dropped because they are recorded after issuance and leak the outcome.
-- **Lending Club's grade, sub-grade and interest rate are excluded from model features.** They are outputs of Lending Club's own risk model; they stay in the warehouse for BI segmentation.
+- **Lending Club's grade, sub-grade and interest rate are excluded from model features.** They are outputs of Lending Club's own risk model; they stay in the warehouse for BI segmentation. `addr_state` is also excluded from the credit model (fair-lending proxy risk) but is analyzed statistically.
+- **No class reweighting for LightGBM.** Reweighting distorts predicted probabilities, and ranking metrics don't need it. Imbalance is handled by early stopping on PR-AUC and by choosing the threshold for a target recall. The logistic baseline keeps balanced class weights, which is why its Brier score is worse.
+- **Early stopping, calibration and threshold all use the validation split.** The test split is used only once, for the final report.
 - **Mature vintages only.** Credit training uses loans issued before 2016 (`--credit-max-issue-date`). Later vintages are mostly unresolved, and their resolved subset over-represents early payoffs and fast defaults. 60-month loans from 2014–2015 are still partly right-censored; this is a known limitation.
 - **Out-of-time evaluation.** Both models split train/validation/test chronologically (`issue_date` for credit, `TransactionDT` for fraud) so evaluation mirrors scoring future applications and transactions.
 - **Threshold chosen on validation, reported on test.** The threshold is the highest-precision point that meets the recall floor on the validation split; test metrics are never used to tune it.

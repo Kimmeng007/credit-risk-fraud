@@ -12,6 +12,10 @@ dependencies = [
   "pandas>=2.1",
   "scikit-learn>=1.4",
   "pyarrow>=14",
+  "scipy>=1.11",
+  "lightgbm>=4.7",
+  "shap>=0.45",
+  "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]
