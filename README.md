@@ -7,7 +7,7 @@ An on-premise-style data engineering and classical machine learning project for 
 
 ## Honest scope
 
-The combined raw data is roughly 4 GB and does not strictly require distributed processing at this scale. pandas could process it on one machine. Spark is used deliberately to demonstrate an on-premise banking architecture pattern, not because this dataset size demands a cluster. No synthetic rows are generated, and no cloud, LLM, RAG, or agentic components are included.
+The combined raw data is roughly 4 GB and does not strictly require distributed processing at this scale. pandas could process it on one machine. Spark is used deliberately to demonstrate an on-premise banking architecture pattern, not because this dataset size demands a cluster.
 
 **HDFS is not used yet.** Processed Parquet lives on the local disk (`data/processed`) and stands in for an HDFS data lake. Spark reads and writes through Hadoop's file system API, so moving to a single-node HDFS changes only the paths (`hdfs://...`), not the processing code. HDFS is planned as a later step. On one machine it would add no space, speed or fault tolerance; it would only demonstrate the architecture.
 
