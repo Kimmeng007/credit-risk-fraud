@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "credit-risk-fraud"
 version = "0.1.0"
-description = "On-premise-style Spark, HDFS, Oracle, and classical ML pipeline for credit risk and fraud detection"
+description = "On-premise-style Spark, Oracle, and classical ML pipeline for credit risk and fraud detection"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",

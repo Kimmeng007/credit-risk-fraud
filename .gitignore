@@ -8,5 +8,6 @@ data/raw/
 data/processed/
 data/models/
 data/reports/
+data/bi/
 logs/
 .env

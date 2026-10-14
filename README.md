@@ -1,13 +1,15 @@
 # Credit Risk and Fraud Detection
 
-An on-premise-style data engineering and classical machine learning project for banking analytics. The pipeline is designed around **PySpark -> HDFS/Parquet -> Oracle -> models -> BI** and covers two real datasets:
+An on-premise-style data engineering and classical machine learning project for banking analytics. The pipeline runs **PySpark -> Parquet -> Oracle -> models -> BI** and covers two real datasets:
 
 - Lending Club accepted loans for default prediction
 - IEEE-CIS Fraud Detection transaction and identity data for fraud prediction
 
 ## Honest scope
 
-The combined raw data is roughly 4 GB and does not strictly require distributed processing at this scale. pandas could process it on one machine. Spark and HDFS are used deliberately to demonstrate an on-premise banking architecture pattern, not because this dataset size demands a cluster. No synthetic rows are generated, and no cloud, LLM, RAG, or agentic components are included.
+The combined raw data is roughly 4 GB and does not strictly require distributed processing at this scale. pandas could process it on one machine. Spark is used deliberately to demonstrate an on-premise banking architecture pattern, not because this dataset size demands a cluster. No synthetic rows are generated, and no cloud, LLM, RAG, or agentic components are included.
+
+**HDFS is not used yet.** Processed Parquet lives on the local disk (`data/processed`) and stands in for an HDFS data lake. Spark reads and writes through Hadoop's file system API, so moving to a single-node HDFS changes only the paths (`hdfs://...`), not the processing code. HDFS is planned as a later step. On one machine it would add no space, speed or fault tolerance; it would only demonstrate the architecture.
 
 ## Quick start
 
@@ -24,7 +26,7 @@ python scripts/run_spark_processing.py --credit --fraud
 python -m pytest
 ```
 
-Processed Parquet outputs are written to `data/processed`. Configure HDFS paths through the Spark submit environment when moving from local mode to a single-node HDFS deployment.
+Processed Parquet outputs are written to `data/processed`. Spark runs in local mode with a 6 GB driver heap by default; set `SPARK_DRIVER_MEMORY` to change it.
 
 ## Modeling
 
@@ -114,11 +116,11 @@ The loader uses python-oracledb in thin mode, so no Oracle client install is nee
 
 ## Governance
 
-`scripts/load_warehouse.py` exits with an error if any data quality check returns FAIL, so a bad load is not used downstream. WARN results need a human review. Monitor monthly default and fraud rates, feature missingness, and population stability by score band. Investigate drift before changing thresholds or retraining.
+The full data quality and model monitoring plan is in [docs/governance.md](docs/governance.md). `scripts/load_warehouse.py` exits with an error if any data quality check returns FAIL, so a bad load is not used downstream. WARN results need a human review. Monitor monthly default and fraud rates, feature missingness, and population stability by score band. Investigate drift before changing thresholds or retraining.
 
 ## Build phases
 
 1. Run Spark ingestion and feature engineering.
 2. Load Parquet into Oracle with `scripts/load_warehouse.py`.
 3. Train models and publish metrics and interpretability outputs.
-4. Connect Power BI or Tableau to the Oracle analytical queries for risk segments, default trends, and fraud monitoring.
+4. Create the BI views and export extracts with `python scripts/export_bi_extracts.py`, then build the Power BI dashboard following [docs/powerbi_dashboard_guide.md](docs/powerbi_dashboard_guide.md).

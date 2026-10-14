@@ -43,6 +43,19 @@ def test_load_and_check_scripts_split_cleanly():
         assert all(s.split()[0].upper() in {"SELECT", "INSERT"} for s in statements), name
 
 
+def test_bi_views_match_export_list():
+    from importlib import util
+
+    statements = split_sql_statements((SQL_DIR / "05_bi_views.sql").read_text(encoding="utf-8"))
+    created = {s.split()[4].lower() for s in statements}
+    assert all(s.upper().startswith("CREATE OR REPLACE VIEW") for s in statements)
+
+    spec = util.spec_from_file_location("export_bi", SQL_DIR.parent / "scripts" / "export_bi_extracts.py")
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert created == set(module.BI_VIEWS)
+
+
 def test_staging_frame_renames_and_converts_missing_values_to_none():
     data = pd.DataFrame(
         {
