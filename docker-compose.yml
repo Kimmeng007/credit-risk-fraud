@@ -1,0 +1,26 @@
+# Local on-premise-style Oracle warehouse (Oracle Database 23ai Free).
+# Start:  docker compose up -d oracle     (first start takes a few minutes)
+# Status: docker compose ps               (wait for "healthy")
+# Connect: user CREDIT_DW / password from APP_USER_PASSWORD, service FREEPDB1, port 1521
+# Passwords below are local-development defaults; override them in a .env file.
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    container_name: credit-risk-oracle
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-OracleAdmin123}
+      APP_USER: CREDIT_DW
+      APP_USER_PASSWORD: ${APP_USER_PASSWORD:-CreditDw123}
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  oracle-data:
